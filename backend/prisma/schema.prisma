@@ -5,11 +5,154 @@
 // Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+}
+
+// ENUMS 
+
+enum Role {
+  STUDENT
+  TRAINER
+  INSTITUTION
+  PROGRAMME_MANAGER
+  MONITORING_OFFICER
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+}
+
+enum InviteType {
+  ONE_TIME
+  REUSABLE
+}
+
+// MODELS 
+
+model User {
+  id            String   @id @default(cuid())
+  clerkUserId   String   @unique @map("clerk_user_id")
+  name          String
+  role          Role
+  institutionId String?  @map("institution_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  // Relations
+  institution      Institution?   @relation(fields: [institutionId], references: [id], onDelete: SetNull)
+  trainerSessions  Session[]      @relation("TrainerSessions")
+  attendances      Attendance[]
+  batchesAsTrainer BatchTrainer[] @relation("TrainerLink")
+  batchesAsStudent BatchStudent[] @relation("StudentLink")
+  createdInvites   BatchInvite[]
+
+  @@map("users")
+}
+
+model Institution {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  users   User[]
+  batches Batch[]
+
+  @@map("institutions")
+}
+
+model Batch {
+  id            String   @id @default(cuid())
+  name          String
+  institutionId String   @map("institution_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  institution Institution  @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  trainers    BatchTrainer[]
+  students    BatchStudent[]
+  sessions    Session[]
+  invites     BatchInvite[]
+
+  @@map("batches")
+}
+
+// Explicit many-to-many join table: Batch ↔ Trainer
+// EDUCATION: Named relations ("TrainerLink") are required here because
+// User has TWO relations to BatchTrainer (trainer) and BatchStudent (student).
+// Without names, Prisma can't tell which relation field maps to which.
+model BatchTrainer {
+  batchId   String @map("batch_id")
+  trainerId String @map("trainer_id")
+
+  batch   Batch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  trainer User  @relation("TrainerLink", fields: [trainerId], references: [id], onDelete: Cascade)
+
+  @@id([batchId, trainerId])
+  @@map("batch_trainers")
+}
+
+// Explicit many-to-many join table: Batch ↔ Student
+model BatchStudent {
+  batchId   String @map("batch_id")
+  studentId String @map("student_id")
+
+  batch   Batch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  student User  @relation("StudentLink", fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@id([batchId, studentId])
+  @@map("batch_students")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  batchId   String   @map("batch_id")
+  trainerId String   @map("trainer_id")
+  title     String
+  date      String   // YYYY-MM-DD — stored as string to avoid timezone headaches
+  startTime String   @map("start_time") // HH:MM
+  endTime   String   @map("end_time")   // HH:MM
+  createdAt DateTime @default(now()) @map("created_at")
+
+  batch      Batch        @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  trainer    User         @relation("TrainerSessions", fields: [trainerId], references: [id], onDelete: Cascade)
+  attendance Attendance[]
+
+  @@map("sessions")
+}
+
+model Attendance {
+  id        String           @id @default(cuid())
+  sessionId String           @map("session_id")
+  studentId String           @map("student_id")
+  status    AttendanceStatus
+  markedAt  DateTime         @default(now()) @map("marked_at")
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  student User    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  // A student can only mark attendance once per session
+  @@unique([sessionId, studentId])
+  @@map("attendance")
+}
+
+model BatchInvite {
+  id          String     @id @default(cuid())
+  // token is auto-generated (cuid), used in the invite URL
+  token       String     @unique @default(cuid())
+  batchId     String     @map("batch_id")
+  createdById String     @map("created_by_id")
+  type        InviteType @default(ONE_TIME)
+  isActive    Boolean    @default(true) @map("is_active")
+  useCount    Int        @default(0) @map("use_count")
+  expiresAt   DateTime?  @map("expires_at")
+  createdAt   DateTime   @default(now()) @map("created_at")
+
+  batch     Batch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  createdBy User  @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@map("batch_invites")
 }
