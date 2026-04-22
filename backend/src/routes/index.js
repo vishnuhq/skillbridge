@@ -22,6 +22,7 @@ const configureRoutes = (app) => {
   app.use('/batches', batchRoutes);
   app.use('/sessions', sessionRoutes);
   app.use('/attendance', attendanceRoutes);
+  app.use('/institution', institutionRoutes);
   app.use('/institutions', institutionRoutes);
   app.use('/programme', programmeRoutes);
 };

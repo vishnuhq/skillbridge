@@ -79,5 +79,4 @@ export const createSessionSchema = z
 
 export const markAttendanceSchema = z.object({
   sessionId: z.string().min(1, 'Session ID required'),
-  status: z.enum(['PRESENT', 'ABSENT', 'LATE']).default('PRESENT'),
 });

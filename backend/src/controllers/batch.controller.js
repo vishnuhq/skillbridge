@@ -11,6 +11,7 @@
  *   GET  /institution/trainers   — list all trainers in institution (INSTITUTION)
  */
 
+import { isSessionEnded, syncSessionAbsencesIfEnded } from '../lib/attendanceLifecycle.js';
 import { HttpError } from '../lib/httpError.js';
 import { prisma } from '../lib/prisma.js';
 
@@ -85,7 +86,13 @@ export const createBatch = async (req, res, next) => {
 
     const batch = await prisma.batch.create({
       data: { name, institutionId },
-      include: { institution: { select: { id: true, name: true } } },
+      include: {
+        institution: { select: { id: true, name: true } },
+        trainers: {
+          include: { trainer: { select: { id: true, name: true } } },
+        },
+        _count: { select: { students: true, sessions: true } },
+      },
     });
 
     // Trainer auto-assigned so they can use the batch immediately
@@ -93,6 +100,20 @@ export const createBatch = async (req, res, next) => {
       await prisma.batchTrainer.create({
         data: { batchId: batch.id, trainerId: userId },
       });
+
+      // Re-fetch to include the newly created trainer relation in response
+      const withTrainer = await prisma.batch.findUnique({
+        where: { id: batch.id },
+        include: {
+          institution: { select: { id: true, name: true } },
+          trainers: {
+            include: { trainer: { select: { id: true, name: true } } },
+          },
+          _count: { select: { students: true, sessions: true } },
+        },
+      });
+
+      return res.status(201).json({ batch: withTrainer });
     }
 
     res.status(201).json({ batch });
@@ -222,9 +243,28 @@ export const joinBatch = async (req, res, next) => {
       throw new HttpError(400, 'This invite link has expired');
     }
 
+    const now = new Date();
+
     // Join batch + handle invite lifecycle atomically
     await prisma.$transaction(async (tx) => {
       await tx.batchStudent.create({ data: { batchId, studentId } });
+
+      // If student joins after sessions have already ended, backfill ABSENT entries.
+      const sessions = await tx.session.findMany({
+        where: { batchId },
+        select: { id: true, date: true, endTime: true },
+      });
+
+      const missed = sessions
+        .filter((s) => isSessionEnded(s, now))
+        .map((s) => ({ sessionId: s.id, studentId, status: 'ABSENT' }));
+
+      if (missed.length > 0) {
+        await tx.attendance.createMany({
+          data: missed,
+          skipDuplicates: true,
+        });
+      }
 
       const update = { useCount: { increment: 1 } };
       if (invite.type === 'ONE_TIME') update.isActive = false;
@@ -255,6 +295,13 @@ export const joinBatch = async (req, res, next) => {
 export const getBatchSummary = async (req, res, next) => {
   try {
     const { id: batchId } = req.params;
+
+    const tracker = await prisma.session.findMany({
+      where: { batchId },
+      select: { id: true, batchId: true, date: true, endTime: true },
+    });
+
+    await Promise.all(tracker.map((s) => syncSessionAbsencesIfEnded(prisma, s)));
 
     const batch = await prisma.batch.findUnique({
       where: { id: batchId },

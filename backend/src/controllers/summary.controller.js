@@ -6,6 +6,7 @@
  *   GET /programme/summary        — Programme Manager + Monitoring Officer: programme-wide
  */
 
+import { syncSessionAbsencesIfEnded } from '../lib/attendanceLifecycle.js';
 import { HttpError } from '../lib/httpError.js';
 import { prisma } from '../lib/prisma.js';
 
@@ -17,6 +18,13 @@ import { prisma } from '../lib/prisma.js';
 export const getInstitutionSummary = async (req, res, next) => {
   try {
     const { id: institutionId } = req.params;
+
+    const tracker = await prisma.session.findMany({
+      where: { batch: { institutionId } },
+      select: { id: true, batchId: true, date: true, endTime: true },
+    });
+
+    await Promise.all(tracker.map((s) => syncSessionAbsencesIfEnded(prisma, s)));
 
     const institution = await prisma.institution.findUnique({
       where: { id: institutionId },
@@ -65,6 +73,12 @@ export const getInstitutionSummary = async (req, res, next) => {
  */
 export const getProgrammeSummary = async (req, res, next) => {
   try {
+    const tracker = await prisma.session.findMany({
+      select: { id: true, batchId: true, date: true, endTime: true },
+    });
+
+    await Promise.all(tracker.map((s) => syncSessionAbsencesIfEnded(prisma, s)));
+
     const institutions = await prisma.institution.findMany({
       include: {
         _count: { select: { batches: true, users: true } },

@@ -7,6 +7,11 @@
  *   GET  /sessions/:id/attendance — session attendance (TRAINER)
  */
 
+import {
+  buildSessionDateTime,
+  isSessionEnded,
+  syncSessionAbsencesIfEnded,
+} from '../lib/attendanceLifecycle.js';
 import { HttpError } from '../lib/httpError.js';
 import { prisma } from '../lib/prisma.js';
 
@@ -18,6 +23,22 @@ export const createSession = async (req, res, next) => {
   try {
     const { batchId, title, date, startTime, endTime } = req.validated;
     const trainerId = req.user.id;
+    const now = new Date();
+
+    const startAt = buildSessionDateTime(date, startTime);
+    const endAt = buildSessionDateTime(date, endTime);
+
+    if (!startAt || !endAt) {
+      throw new HttpError(400, 'Invalid session date/time');
+    }
+
+    if (endAt <= startAt) {
+      throw new HttpError(400, 'End time must be after start time');
+    }
+
+    if (startAt <= now || endAt <= now) {
+      throw new HttpError(400, 'Session start and end must be in the future');
+    }
 
     // Verify trainer is assigned to this batch
     const link = await prisma.batchTrainer.findUnique({
@@ -30,6 +51,7 @@ export const createSession = async (req, res, next) => {
       data: { batchId, trainerId, title, date, startTime, endTime },
       include: {
         batch: { select: { id: true, name: true } },
+        _count: { select: { attendance: true } },
       },
     });
 
@@ -47,8 +69,16 @@ export const createSession = async (req, res, next) => {
 export const getSessions = async (req, res, next) => {
   try {
     const { role, id: userId } = req.user;
+    const now = new Date();
 
     if (role === 'TRAINER') {
+      const tracker = await prisma.session.findMany({
+        where: { trainerId: userId },
+        select: { id: true, batchId: true, date: true, endTime: true },
+      });
+
+      await Promise.all(tracker.map((s) => syncSessionAbsencesIfEnded(prisma, s, now)));
+
       const sessions = await prisma.session.findMany({
         where: { trainerId: userId },
         include: {
@@ -69,6 +99,17 @@ export const getSessions = async (req, res, next) => {
       });
 
       const batchIds = enrolledBatches.map((b) => b.batchId);
+
+      if (batchIds.length === 0) {
+        return res.json({ sessions: [] });
+      }
+
+      const tracker = await prisma.session.findMany({
+        where: { batchId: { in: batchIds } },
+        select: { id: true, batchId: true, date: true, endTime: true },
+      });
+
+      await Promise.all(tracker.map((s) => syncSessionAbsencesIfEnded(prisma, s, now)));
 
       // Get sessions for those batches
       const sessions = await prisma.session.findMany({
@@ -102,6 +143,18 @@ export const getSessionAttendance = async (req, res, next) => {
   try {
     const { id: sessionId } = req.params;
 
+    const base = await prisma.session.findUnique({
+      where: { id: sessionId },
+      select: { id: true, batchId: true, trainerId: true, date: true, endTime: true },
+    });
+
+    if (!base) throw new HttpError(404, 'Session not found');
+    if (base.trainerId !== req.user.id) throw new HttpError(403, 'Access denied');
+
+    if (isSessionEnded(base)) {
+      await syncSessionAbsencesIfEnded(prisma, base);
+    }
+
     const session = await prisma.session.findUnique({
       where: { id: sessionId },
       include: {
@@ -115,7 +168,6 @@ export const getSessionAttendance = async (req, res, next) => {
     });
 
     if (!session) throw new HttpError(404, 'Session not found');
-    if (session.trainerId !== req.user.id) throw new HttpError(403, 'Access denied');
 
     const stats = {
       present: session.attendance.filter((a) => a.status === 'PRESENT').length,
