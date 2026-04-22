@@ -199,25 +199,47 @@ export const getBatchSummary = async (req, res, next) => {
 };
 
 /**
- * GET /batches?institutionId=xxx
- * List batches for an institution (used by INSTITUTION dashboard).
+ * GET /batches
+ * - INSTITUTION: returns all batches belonging to their institution
+ * - TRAINER: returns only batches they are explicitly assigned to
  */
 export const getBatches = async (req, res, next) => {
   try {
-    const institutionId = req.user.institutionId;
+    const { role, id: userId, institutionId } = req.user;
 
-    if (!institutionId) throw new HttpError(400, 'No institution assigned');
+    if (role === 'INSTITUTION') {
+      if (!institutionId) throw new HttpError(400, 'No institution assigned');
 
-    const batches = await prisma.batch.findMany({
-      where: { institutionId },
-      include: {
-        trainers: { include: { trainer: { select: { id: true, name: true } } } },
-        _count: { select: { students: true, sessions: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+      const batches = await prisma.batch.findMany({
+        where: { institutionId },
+        include: {
+          trainers: { include: { trainer: { select: { id: true, name: true } } } },
+          _count: { select: { students: true, sessions: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
 
-    res.json({ batches });
+      return res.json({ batches });
+    }
+
+    if (role === 'TRAINER') {
+      // Only return batches this trainer is assigned to
+      const trainerBatches = await prisma.batchTrainer.findMany({
+        where: { trainerId: userId },
+        include: {
+          batch: {
+            include: {
+              _count: { select: { students: true, sessions: true } },
+            },
+          },
+        },
+      });
+
+      const batches = trainerBatches.map((bt) => bt.batch);
+      return res.json({ batches });
+    }
+
+    throw new HttpError(403, 'Forbidden');
   } catch (err) {
     next(err);
   }
