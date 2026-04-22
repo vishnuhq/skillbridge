@@ -9,7 +9,7 @@
  * Returns null if invalid.
  */
 export const buildSessionDateTime = (date, time) => {
-  const dt = new Date(`${date}T${time}:00`);
+  const dt = new Date(`${date}T${time}:00+05:30`);
   return Number.isNaN(dt.getTime()) ? null : dt;
 };
 
