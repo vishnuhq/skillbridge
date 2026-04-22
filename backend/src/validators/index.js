@@ -6,21 +6,13 @@ import { z } from 'zod';
 
 // Auth
 
-export const ROLES = [
-  'STUDENT',
-  'TRAINER',
-  'INSTITUTION',
-  'PROGRAMME_MANAGER',
-  'MONITORING_OFFICER',
-];
-
 /**
  * POST /auth/sync — creates the DB user record after Clerk sign-up
  */
 export const syncSchema = z
   .object({
     name: z.string().min(2, 'Name must be at least 2 characters').max(100),
-    role: z.enum(ROLES),
+    role: z.enum(['STUDENT', 'TRAINER', 'INSTITUTION', 'PROGRAMME_MANAGER', 'MONITORING_OFFICER']),
     // For STUDENT / TRAINER: must pick an existing institution
     institutionId: z.string().min(1).optional().nullable(),
     // For INSTITUTION role: can create a new institution by name
@@ -50,6 +42,10 @@ export const createBatchSchema = z.object({
   // Optional: INSTITUTION role can pass institutionId explicitly,
   // otherwise the backend uses req.user.institutionId
   institutionId: z.string().optional(),
+});
+
+export const assignTrainerSchema = z.object({
+  trainerId: z.string().min(1, 'Trainer ID required'),
 });
 
 export const createInviteSchema = z.object({

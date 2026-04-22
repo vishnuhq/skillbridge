@@ -6,9 +6,15 @@ import { Router } from 'express';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 
-import { createBatchSchema, createInviteSchema, joinBatchSchema } from '../validators/index.js';
+import {
+  assignTrainerSchema,
+  createBatchSchema,
+  createInviteSchema,
+  joinBatchSchema,
+} from '../validators/index.js';
 
 import {
+  assignTrainer,
   createBatch,
   createInvite,
   getBatchSummary,
@@ -26,6 +32,14 @@ router.post(
   requireRole('TRAINER', 'INSTITUTION'),
   validate(createBatchSchema),
   createBatch
+);
+
+router.post(
+  '/:id/trainers',
+  authenticate,
+  requireRole('INSTITUTION'),
+  validate(assignTrainerSchema),
+  assignTrainer
 );
 
 router.post(
